@@ -6,7 +6,7 @@ built to demonstrate data engineering, stochastic modeling, and machine learning
 ## Project roadmap
 
 - [x] **Phase 1 — Data engineering foundation**: normalized SQLite schema, idempotent ETL pipeline
-- [ ] **Phase 1b — Filing date backfill**: account for reporting delay (disclosure vs. actual trade date)
+- [x] **Phase 1b — Filing date backfill**: joins per-filing report files back to transactions (~74% coverage)
 - [ ] **Phase 2 — Ornstein-Uhlenbeck model**: mean-reversion risk model on trade timing/sizing
 - [ ] **Phase 3 — ML features & models**: pull historical prices, engineer features, train LightGBM/XGBoost
 - [ ] **Dashboard**: Streamlit front-end for exploring senators, tickers, and model signals
@@ -32,10 +32,27 @@ directly, since the mirror can go stale (as it has — see below).
 - **The mirror stopped updating in 2020.** Data covers 2012–2020 disclosures only. The pipeline
   (`fetch_raw_records()` in `src/ingest.py`) is isolated to one function, so pointing it at a live
   source later is a small, contained change.
-- **No filing date, only transaction date.** The STOCK Act requires disclosure within 30–45 days
-  of a trade, so the gap between trade and disclosure is itself a signal worth modeling — but the
-  source data doesn't include it. `filing_date` is a real column in the schema, currently NULL,
-  slated for backfill in Phase 1b (likely by joining against `ptr_link` filing metadata).
+- **Filing dates cover ~74% of transactions, not 100%.** `src/backfill_filing_dates.py` joins the
+  aggregate transaction file against a second part of the same source repo — one JSON file per
+  filing date (`data/transaction_report_for_MM_DD_YYYY.json`) — matched via the same field-hash
+  logic used for deduplication in `ingest.py`. The ~26% gap is not silently absorbed; it comes from
+  two confirmed causes: (1) some filing-report files cover dates outside the aggregate file's own
+  coverage window — an inconsistency between two files in the same source repo, not a bug in this
+  pipeline; (2) a minority of `asset_description` fields in the per-filing files contain embedded
+  HTML (e.g. nested option/strike-price details) that isn't present in the cleaned aggregate file,
+  so the two representations of the same trade don't string-match. This ceiling was measured, not
+  assumed, and is left as a known limitation rather than chased with fuzzy matching, which would
+  trade one explainable gap for an unverifiable one.
+- **The backfill join itself required a correctness fix worth documenting.** An early version took
+  the first matching filing_date it found per transaction; because filing files are named
+  `transaction_report_for_MM_DD_YYYY.json` and sorted alphabetically (grouping by month-then-year,
+  not chronologically), this occasionally attached an earlier-sorted-but-later-actual-date filing
+  to a transaction, producing a handful of impossible `filing_date < transaction_date` rows. Fixed
+  by gathering all candidate filing dates per transaction and selecting the earliest one that is
+  actually on or after the trade date. Caught via a validation query
+  (`filing_date < transaction_date` should always return 0 rows), not by inspection.
+- **~4.5% of matched trades were disclosed more than 45 days after the transaction** — the STOCK
+  Act's legal disclosure deadline. This is a genuine finding in the data, not a pipeline artifact.
 - **Two distinct junk-ticker placeholders exist in the source (`'--'` and `'N/A'`)**, together
   ~25% of all rows. Both are normalized to `NULL` in `ticker` during ingestion — see
   `clean_ticker()` in `src/ingest.py`. This was caught via a `GROUP BY ticker ORDER BY COUNT(*)`
