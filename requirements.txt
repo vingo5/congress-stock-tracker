@@ -1,16 +1,15 @@
-# Phase 1 (data engineering) — no third-party deps needed, stdlib only.
-# Uncommented as later phases are built:
+# Phase 1 (data engineering) - stdlib only, nothing to install yet.
+certifi
 
-# Phase 2 — Ornstein-Uhlenbeck model
-# numpy
-# scipy
-# pandas
+# Phase 2 - Ornstein-Uhlenbeck model
+numpy
+pandas
+yfinance
 
-# Phase 3 — ML features + models
+# Phase 3 - ML features + models
 # lightgbm
 # xgboost
 # scikit-learn
-# yfinance          # or another price-history source
 
 # Dashboard
 # streamlit
