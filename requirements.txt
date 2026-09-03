@@ -7,9 +7,8 @@ pandas
 yfinance
 
 # Phase 3 - ML features + models
-# lightgbm
-# xgboost
-# scikit-learn
+lightgbm
+scikit-learn
 
 # Dashboard
 # streamlit

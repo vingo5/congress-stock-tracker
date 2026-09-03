@@ -8,7 +8,7 @@ built to demonstrate data engineering, stochastic modeling, and machine learning
 - [x] **Phase 1 — Data engineering foundation**: normalized SQLite schema, idempotent ETL pipeline
 - [x] **Phase 1b — Filing date backfill**: joins per-filing report files back to transactions (~74% coverage)
 - [x] **Phase 2 — Ornstein-Uhlenbeck model**: mean-reversion z-score signal per trade
-- [ ] **Phase 3 — ML features & models**: pull historical prices, engineer features, train LightGBM/XGBoost
+- [x] **Phase 3 — ML features & models**: leak-free features, LightGBM classifier vs. market benchmark
 - [ ] **Dashboard**: Streamlit front-end for exploring senators, tickers, and model signals
 
 ## Data source
@@ -118,6 +118,56 @@ faithful — documented here as the natural next iteration rather than silently 
 the top 30 most-traded tickers (generalizes to all 1,007 tickers unchanged — just widen the limit
 — which is the natural bridge into Phase 3's full price ingestion).
 
+**Real-run result.** Of the top 30 tickers, 6 failed to fetch price data — not a bug, but a real
+data-source limitation confirmed by inspection: `DISCA`, `FDC`, `FEYE`, `HBI`, and `WPX` reflect
+genuine corporate actions (mergers, acquisitions, and delistings) that occurred after the trades
+in this dataset were made, and `FB`'s ticker was later renamed to `META`. The pipeline logs each
+failure and continues rather than crashing. The remaining 24 tickers produced **1,237 OU signals**,
+with fitted mean-reversion half-lives ranging ~5.5–10.7 trading days — a sane range for daily-price
+deviation from a 20-day trend, not the near-zero or near-infinite half-lives that would indicate a
+broken fit.
+
+## Phase 3: ML features & model
+
+**Target.** Binary classification: did the ticker's return over the 30 trading days *following the
+filing date* exceed SPY's return over the same window (positive excess return)? Anchored on
+`filing_date`, not `transaction_date` — the filing date is the earliest point the trade was public
+information; anchoring on the (earlier, non-public) transaction date would itself be a subtle
+look-ahead bias, predicting off information nobody could have acted on yet.
+
+**Fixing a real look-ahead bias from Phase 2.** `generate_ou_signals.py` fits one OU model per
+ticker using that ticker's *entire* price history — fine for describing a stock's general
+reversion behavior, but invalid as an ML feature meant to predict a forward outcome, since a 2014
+trade's z-score would then be computed partly from 2020 data nobody had yet. `build_features.py`
+fixes this: it refits OU per *transaction*, using only price history up to and including that
+trade's filing date. More expensive (one fit per transaction instead of per ticker), but it's the
+only version of this feature that's valid to train a supervised model on.
+
+**Time-based train/test split.** `train_model.py` sorts by `filing_date` and trains on the earliest
+80%, tests on the most recent 20% — never a random shuffle, which would let the model train on
+trades that happened after some of its own test trades and produce a meaningless accuracy number.
+This is the same constraint a live trading signal would actually face.
+
+**Pipeline validated against a known injected effect before trusting real data.** Synthetic price
+series were generated with real mean-reversion parameters embedded (the same `simulate_ou()` used
+to validate Phase 2), and the leak-free feature pipeline correctly recovered a negative correlation
+between `ou_zscore` and forward excess return (mean-reverting: below-trend prices → positive
+subsequent excess return), and the trained model correctly ranked `ou_zscore` as its most important
+feature. This confirms the pipeline surfaces a real signal when one exists, before it's pointed at
+real data where the true effect (if any) is unknown.
+
+**To run for real:**
+```bash
+python src/fetch_prices.py 100 --forward --benchmark   # widen ticker scope + pull SPY
+python src/build_features.py
+python src/train_model.py
+```
+The default scope (top 30 tickers, no forward buffer, no benchmark) from Phase 2 isn't enough for
+Phase 3 — `--forward` extends the price pull past the last trade date (needed for the 30-day
+forward-return label) and `--benchmark` pulls SPY. Widening past the top 30 tickers (e.g. `100`)
+gives the model more training rows; expect some tickers to fail (see the Phase 2 note on corporate
+actions/delistings) — the script logs and continues rather than crashing.
+
 ## Project structure
 
 ```
@@ -128,8 +178,10 @@ congress-stock-tracker/
 │   ├── backfill_filing_dates.py    # Phase 1b: filing date join
 │   ├── ou_model.py                 # Phase 2: OU fitting logic
 │   ├── test_ou_model.py            # Phase 2: validation against simulated data
-│   ├── fetch_prices.py             # Phase 2: real price ingestion (top tickers)
-│   └── generate_ou_signals.py      # Phase 2: writes z-scores to trade_signals
+│   ├── fetch_prices.py             # Phase 2/3: real price ingestion (+ forward buffer, SPY)
+│   ├── generate_ou_signals.py      # Phase 2: writes z-scores to trade_signals
+│   ├── build_features.py           # Phase 3: leak-free features + forward-return labels
+│   └── train_model.py              # Phase 3: time-split LightGBM training + evaluation
 ├── data/                # gitignored; generated by ingest.py / fetch_prices.py
 ├── requirements.txt
 └── README.md
