@@ -153,8 +153,26 @@ series were generated with real mean-reversion parameters embedded (the same `si
 to validate Phase 2), and the leak-free feature pipeline correctly recovered a negative correlation
 between `ou_zscore` and forward excess return (mean-reverting: below-trend prices → positive
 subsequent excess return), and the trained model correctly ranked `ou_zscore` as its most important
-feature. This confirms the pipeline surfaces a real signal when one exists, before it's pointed at
-real data where the true effect (if any) is unknown.
+feature, with walk-forward AUC clearly above 0.5 in most folds (0.55–0.76). This confirms the
+pipeline surfaces a real signal when one exists, before it's pointed at real data where the true
+effect (if any) is unknown.
+
+**Real-data result: no detectable predictive edge.** Walk-forward cross-validation across 5
+time-based folds spanning 2016–2020 gives AUC = 0.497 ± 0.032 (mean ± std), with every individual
+fold landing within noise of 0.5 (range 0.449–0.546) — including folds entirely within calm,
+pre-2020 market conditions. This rules out "the 2020 COVID regime shift alone explains it": in the
+synthetic validation run, non-2020 folds showed clear signal (AUC 0.55–0.76) while only the 2020
+fold degraded; in the real data, *every* fold is flat. `ou_zscore` remains the model's most
+important feature by a wide margin, meaning the model consistently tries to use the mean-reversion
+signal — it just doesn't find that signal predictive of which stocks beat the market over a 30-day
+window following a congressional trade's filing date, at least not via this feature set.
+
+This is treated as a genuine empirical finding, not a failed build: the estimator was validated
+end-to-end against synthetic data with a known ground-truth effect before ever touching real
+prices, so a null result on real data reads as an honest "no edge found here" rather than "the
+pipeline is broken." It's also consistent with a meaningful chunk of the academic literature on
+congressional trading, which finds decidedly mixed evidence for a market-beating edge depending on
+sample period, aggregation level, and holding horizon.
 
 **To run for real:**
 ```bash
